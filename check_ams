@@ -1,0 +1,132 @@
+#!/usr/bin/env python
+# encoding: utf-8
+"""check_ams
+Nagios check script for the Ambari Metrics System (AMS)
+
+Example:
+
+    check_ams --config ./check_ams.conf --component FLUME_HANDLER --host "c13-17.local" \
+        --metric "metrics/flume/flume/SINK/hdfsSink/EventDrainSuccessCount" \
+        --method lt --rate -w 0.1 -c 0.2
+"""
+
+from __future__ import print_function, division
+import time
+import argparse
+from ConfigParser import ConfigParser
+import operator
+import sys
+import urllib2
+import base64
+import json
+
+
+def get_metric(url, user, passwd, cluster, host, component, metric, period):
+    now = int(time.time())
+    query_url = ('{0}/api/v1/clusters/{1}/hosts/{2}/host_components/{3}'
+                 '?fields={4}[{5},{6},15]&_={6}'.format(
+                    url, cluster, host, component, metric, now - period, now))
+    data = http_get(query_url, user, passwd)
+    return unpack_points(data, metric)
+
+
+def unpack_points(data, metric):
+    fields = metric.split('/')
+    value = data
+    for f in fields:
+        value = value[f]
+    return value
+
+
+def http_get(url, user, passwd):
+    """Get the JSON output returned by the given URL"""
+    # Using requests
+    #r = requests.get(query_url, auth=(user, passwd))
+    #return r.json()
+    req = urllib2.Request(url)
+    base64string = base64.b64encode('{0}:{1}'.format(user, passwd))
+    req.add_header('Authorization', b'Basic {0}'.format(base64string))
+    response = urllib2.urlopen(req)
+    if response.code != 200:
+        sys.exit(3)
+        print("UNKNOWN: http response code {0}".format(response.code))
+    return json.load(response)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-f', '--config', required=True,
+                        help='Configuration file with Ambari Endpoing information')
+    parser.add_argument('-H', '--host', required=True,
+                        help='The name of host we are interested in.')
+    parser.add_argument('-C', '--component', required=True,
+                        help='The name of the component we are interested in.')
+    parser.add_argument('-m', '--metric', required=True,
+                        help='Metric to query: eg. metrics/flume/flume/SINK/hdfsSink/EventDrainSuccessCount')
+    parser.add_argument('-x', '--method', choices=['gt', 'lt'], default='gt',
+                        help='Comparison method: gt, lt.')
+    parser.add_argument('-d', '--duration', type=int, default=600,
+                        help='How many seconds of data to retrieve.')
+    parser.add_argument('-r', '--rate', action='store_true',
+                        help='Calculate the rate of change of the metric.')
+    parser.add_argument('-z', '--do-not-filter-zeros', action='store_true',
+                        help='Do not filter out zero values of the metric (usually erroneous).')
+    parser.add_argument('-w', '--warning', type=float, required=True,
+                        help='Threshold for warning.')
+    parser.add_argument('-c', '--critical', type=float, required=True,
+                        help='Threshold for critical.')
+    args = parser.parse_args()
+
+    return args
+
+
+def avg(p):
+    """Calculates the average of the given metric points"""
+    total = sum([x[0] for x in p])
+    return total / len(p)
+
+
+def avg_rate(p):
+    """Calculates the average rate of change of the given counter metric"""
+    return (p[-1][0]-p[0][0])/(p[-1][1]-p[0][1])
+
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    config = ConfigParser()
+    config.read(args.config)
+    url = config.get('Ambari', 'url')
+    user = config.get('Ambari', 'user')
+    password = config.get('Ambari', 'password')
+    cluster = config.get('Ambari', 'cluster')
+
+    comparator = operator.__dict__[args.method]
+
+    points = get_metric(url, user, password, cluster, args.host, args.component, args.metric, args.duration)
+
+    if args.do_not_filter_zeros:
+        p = points
+    else:
+        # Filter out points with 0 value of the metric (usually erroneous data)
+        p = [point for point in points if point[0] != 0]
+
+    # Individual rates
+    #rates = [(p[i+1][0]-p[i][0])/(p[i+1][1]-p[i][1]) for i in range(len(p)-1)]
+    #print(rates)
+
+    if args.rate:
+        result = avg_rate(p)
+    else:
+        result = avg(p)
+
+    if comparator(result, args.warning):
+        sys.exit(1)
+        print("WARNING: {0} | {1}={0}".format(result, args.metric))
+    elif comparator(result, args.critical):
+        sys.exit(2)
+        print("CRITICAL: {0} | {1}={0}".format(result, args.metric))
+    else:
+        print("OK: {0} | {1}={0}".format(result, args.metric))
+
+

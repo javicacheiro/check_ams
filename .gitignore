@@ -1,0 +1,14 @@
+venv
+*.pyc
+*.pyo
+*.egg-ignore
+*.egg-info
+*.egg
+*.log
+dist
+build
+docs/_build
+.tox
+.coverage
+.ropeproject
+check_ams_cesga.conf
