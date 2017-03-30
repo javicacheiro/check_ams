@@ -121,11 +121,11 @@ if __name__ == '__main__':
         result = avg(p)
 
     if comparator(result, args.warning):
-        sys.exit(1)
         print("WARNING: {0} | {1}={0}".format(result, args.metric))
+        sys.exit(1)
     elif comparator(result, args.critical):
-        sys.exit(2)
         print("CRITICAL: {0} | {1}={0}".format(result, args.metric))
+        sys.exit(2)
     else:
         print("OK: {0} | {1}={0}".format(result, args.metric))
 
